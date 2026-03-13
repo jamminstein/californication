@@ -7,6 +7,7 @@
 -- - Auto tempo increase: after 4 loops, increase by 5 BPM toward target
 -- - Visual metronome: beat 1 flash
 -- - Section loop: K1+K3 toggles section-only loop (verse/chorus/etc)
+-- - Screen redesign: beat_phase, popup system, brightness hierarchy
 --
 -- ENC1: scroll songs
 -- ENC2: scroll sections
@@ -192,6 +193,12 @@ local state = {
   -- NEW: Section loop
   section_loop_mode = false,
   
+  -- NEW: Screen state vars
+  beat_phase = 0,      -- 0-3 for beat tracking
+  popup_param = nil,   -- popup category
+  popup_val = nil,     -- popup value
+  popup_time = 0,      -- popup display timer
+  
   -- Metronome state
   beat_flash = 0,
 }
@@ -257,6 +264,15 @@ end
 
 function init()
   redraw()
+  
+  -- Screen update loop for beat_phase
+  clock.run(function()
+    while true do
+      state.beat_phase = (state.beat_phase + 1) % 4
+      redraw()
+      clock.sleep(1/10)  -- ~10fps
+    end
+  end)
 end
 
 function enc(n, d)
@@ -265,60 +281,19 @@ function enc(n, d)
     state.section_idx = 1
     state.scroll_offset = 0
     stop_practice_mode()
+    state.popup_param = "SONG"
+    state.popup_val = state.song_idx
+    state.popup_time = 20
   elseif n == 2 then
     local s = SONGS[state.song_idx]
     state.section_idx = util.clamp(state.section_idx + d, 1, #s.sections)
+    state.popup_param = "SECTION"
+    state.popup_val = state.section_idx
+    state.popup_time = 20
   end
   redraw()
 end
 
-function key(n, z)
-  if z == 1 then
-    if n == 2 then
-      -- K2: prev song OR enter practice mode (K1+K2)
-      state.song_idx = util.clamp(state.song_idx - 1, 1, #SONGS)
-      state.section_idx = 1
-      stop_practice_mode()
-    elseif n == 3 then
-      -- K3: next song OR toggle section loop (K1+K3)
-      state.song_idx = util.clamp(state.song_idx + 1, 1, #SONGS)
-      state.section_idx = 1
-      stop_practice_mode()
-    end
-    redraw()
-  end
-end
-
--- K1 held + K2: toggle practice mode
--- K1 held + K3: toggle section loop
-function key(n, z)
-  local k1_held = false
-  
-  if z == 1 then
-    -- Key press
-    if n == 2 then
-      -- E2 can adjust practice tempo if in practice mode
-      if state.practice_mode then
-        state.practice_tempo = util.clamp(state.practice_tempo + 2, 40, state.target_tempo)
-      else
-        state.song_idx = util.clamp(state.song_idx - 1, 1, #SONGS)
-        state.section_idx = 1
-        stop_practice_mode()
-      end
-    elseif n == 3 then
-      if state.practice_mode then
-        stop_practice_mode()
-      else
-        state.section_loop_mode = not state.section_loop_mode
-        state.song_idx = util.clamp(state.song_idx + 1, 1, #SONGS)
-        state.section_idx = 1
-      end
-    end
-    redraw()
-  end
-end
-
--- Better key handler for K1+K2 and K1+K3
 local k1_pressed_time = 0
 
 function key(n, z)
@@ -327,7 +302,6 @@ function key(n, z)
       k1_pressed_time = util.time()
     else
       local held_duration = util.time() - k1_pressed_time
-      -- K1 long press: just mark it
     end
   elseif n == 2 and z == 1 then
     local k1_held = (util.time() - k1_pressed_time) > 0.1
@@ -343,6 +317,9 @@ function key(n, z)
       state.song_idx = util.clamp(state.song_idx - 1, 1, #SONGS)
       state.section_idx = 1
       stop_practice_mode()
+      state.popup_param = "SONG"
+      state.popup_val = state.song_idx
+      state.popup_time = 20
     end
     redraw()
   elseif n == 3 and z == 1 then
@@ -350,120 +327,130 @@ function key(n, z)
     if k1_held then
       -- K1+K3: toggle section loop
       state.section_loop_mode = not state.section_loop_mode
+      state.popup_param = "LOOP"
+      state.popup_val = state.section_loop_mode and "ON" or "OFF"
+      state.popup_time = 20
     else
       -- K3 alone: next song
       state.song_idx = util.clamp(state.song_idx + 1, 1, #SONGS)
       state.section_idx = 1
       stop_practice_mode()
+      state.popup_param = "SONG"
+      state.popup_val = state.song_idx
+      state.popup_time = 20
     end
     redraw()
   end
 end
 
+-- ============================================================
+--  SCREEN
+-- ============================================================
+
 function redraw()
   screen.clear()
+  screen.aa(1)
+  
   local s = SONGS[state.song_idx]
   local sec = s.sections[state.section_idx]
 
-  -- Metronome beat flash
-  if state.beat_flash > 0 then
-    state.beat_flash = state.beat_flash - 1
-    screen.level(state.beat_flash)
-    screen.rect(0, 0, 128, 64)
+  -- ── STATUS STRIP ──────────────────────────────────────
+  screen.level(4)
+  screen.rect(0, 0, 128, 11)
+  screen.fill()
+
+  screen.level(15)
+  screen.font_face(7)
+  screen.font_size(8)
+  screen.move(2, 8)
+  screen.text("CALIFORNICATION")
+
+  -- track number at level 6
+  screen.level(6)
+  screen.font_face(1)
+  screen.font_size(5)
+  screen.move(100, 8)
+  screen.text(state.song_idx.."/"..#SONGS)
+
+  -- beat pulse dot
+  local beat_flash = (state.beat_phase % 4) < 2 and 12 or 4
+  screen.level(beat_flash)
+  screen.circle(120, 5, 2)
+  screen.fill()
+
+  -- ── LIVE ZONE ─────────────────────────────────────────
+  -- Track name at level 12 center
+  screen.level(12)
+  screen.font_face(7)
+  screen.font_size(8)
+  screen.move(0, 25)
+  screen.text(s.title)
+
+  -- Current section (VERSE/CHORUS/BRIDGE) at level 15
+  screen.level(15)
+  screen.font_face(7)
+  screen.font_size(8)
+  screen.move(0, 36)
+  screen.text(sec.name)
+
+  -- Chord progression for current section as blocks
+  screen.level(10)
+  screen.font_face(1)
+  screen.font_size(5)
+  screen.move(0, 46)
+  local chords = sec.chords
+  if #chords <= 35 then
+    screen.text(chords)
+  else
+    screen.text(chords:sub(1, 35).."...")
+  end
+
+  -- Section loop indicator: progress bar at level 6
+  if state.section_loop_mode then
+    screen.level(6)
+    screen.rect(0, 54, 128, 3)
+    screen.stroke()
+    
+    local loop_progress = (state.loop_bars_counter / (sec.bars or 8)) * 128
+    screen.level(12)
+    screen.rect(0, 54, loop_progress, 3)
     screen.fill()
   end
 
-  screen.level(15)
-  -- top bar: song number + title
-  screen.move(0, 8)
-  local title_str = state.song_idx .. "/" .. #SONGS .. " " .. s.title
-  -- truncate if too long
-  if string.len(title_str) > 21 then
-    title_str = string.sub(title_str, 1, 20) .. "~"
-  end
-  screen.text(title_str)
-
-  -- key indicator
-  screen.level(5)
-  screen.move(110, 8)
-  screen.text("k:" .. s.key)
-
-  -- divider
-  screen.level(3)
-  screen.move(0, 11)
-  screen.line(128, 11)
-  screen.stroke()
-
-  -- section tabs row
-  local tab_x = 0
-  for i, sec_item in ipairs(s.sections) do
-    if i == state.section_idx then
-      screen.level(15)
-      -- highlight box
-      local w = string.len(sec_item.name) * 4 + 4
-      screen.rect(tab_x, 13, w, 8)
-      screen.fill()
-      screen.level(0)
-    else
-      screen.level(6)
-    end
-    screen.move(tab_x + 2, 20)
-    screen.text(sec_item.name)
-    local w = string.len(sec_item.name) * 4 + 4
-    tab_x = tab_x + w + 2
-    if tab_x > 100 then break end -- overflow guard
-  end
-
-  -- divider
-  screen.level(3)
-  screen.move(0, 24)
-  screen.line(128, 24)
-  screen.stroke()
-
-  -- chord progression (big, bright)
-  screen.level(15)
-  screen.font_size(8)
-  -- wrap chords if long
-  local chords = sec.chords
-  screen.move(0, 35)
-  if string.len(chords) <= 21 then
-    screen.text(chords)
-  else
-    -- split at " - " midpoint
-    local mid = math.floor(#chords / 2)
-    local split = chords:find(" - ", mid) or mid
-    screen.text(string.sub(chords, 1, split - 1))
-    screen.move(0, 44)
-    screen.level(13)
-    screen.text(string.sub(chords, split + 1))
-  end
-
-  -- hint / lyric cue
-  screen.level(5)
-  screen.font_size(8)
-  screen.move(0, 55)
-  local hint = sec.hint
-  if string.len(hint) > 23 then
-    hint = string.sub(hint, 1, 22) .. "~"
-  end
-  screen.text(hint)
-
-  -- NEW: Practice mode display
+  -- Practice mode: BPM ramp progress at level 8
   if state.practice_mode then
-    screen.level(12)
-    screen.move(0, 63)
-    screen.text("PRACTICE: " .. state.practice_tempo .. "bpm (target: " .. state.target_tempo .. ")")
+    screen.level(8)
+    screen.font_face(1)
+    screen.font_size(5)
+    screen.move(0, 62)
+    screen.text(string.format("%d -> %d BPM", state.practice_tempo, state.target_tempo))
   else
-    -- bottom nav hint
-    screen.level(2)
-    screen.move(0, 63)
-    screen.text("e1:song  e2:section  k1+k2:practice  k1+k3:loop")
+    -- Context bar at level 6
+    screen.level(6)
+    screen.font_face(1)
+    screen.font_size(5)
+    screen.move(0, 62)
+    screen.text(sec.name.." @ "..s.bpm.." BPM")
   end
 
-  if state.section_loop_mode then
-    screen.level(10)
-    screen.move(110, 63)
-    screen.text("LOOP")
+  -- Popup system
+  if state.popup_param and state.popup_time > 0 then
+    screen.level(15)
+    screen.rect(20, 30, 90, 28)
+    screen.fill()
+    
+    screen.level(0)
+    screen.font_face(7)
+    screen.font_size(8)
+    screen.move(25, 40)
+    screen.text(state.popup_param)
+    
+    screen.font_face(1)
+    screen.font_size(7)
+    screen.move(25, 52)
+    screen.text(tostring(state.popup_val))
+    
+    state.popup_time = state.popup_time - 1
   end
 
   screen.update()
