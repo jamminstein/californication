@@ -182,32 +182,123 @@ local state = {
   song_idx = 1,
   section_idx = 1,
   scroll_offset = 0,
-  
+
   -- NEW: Practice mode
   practice_mode = false,
   practice_tempo = nil,  -- will be set to half of song BPM when activated
   target_tempo = nil,    -- original song BPM
   practice_loops = 0,    -- count loops in practice mode
   loop_bars_counter = 0, -- bar counter for current loop
-  
+
   -- NEW: Section loop
   section_loop_mode = false,
-  
+
   -- NEW: Screen state vars
   beat_phase = 0,      -- 0-3 for beat tracking
   popup_param = nil,   -- popup category
   popup_val = nil,     -- popup value
   popup_time = 0,      -- popup display timer
-  
+
   -- Metronome state
   beat_flash = 0,
+
+  -- NEW: Playback mode (sync to BPM)
+  playback_mode = false,
+  playback_clock = nil,
+  playback_bpm = nil,
+
+  -- NEW: Key transposition
+  transpose = 0,        -- -12 to 12 semitones
+
+  -- NEW: Scale highlighting (12 semitone pitch classes)
+  scale_notes = {},
 }
+
+-- NEW: MIDI output for chord tones
+local midi_out = nil
+
+-- NEW: Helper to get scale notes from a key
+local SCALE_OFFSETS = {
+  C = {0,2,4,5,7,9,11},
+  D = {2,4,5,7,9,11,0},
+  E = {4,5,7,9,11,0,2},
+  F = {5,7,9,11,0,2,4},
+  G = {7,9,11,0,2,4,5},
+  A = {9,11,0,2,4,5,7},
+  B = {11,0,2,4,5,7,9},
+  Am = {9,0,2,4,5,7,9},  -- A minor
+}
+
+local function get_scale_from_key(key_str)
+  return SCALE_OFFSETS[key_str] or {0,2,4,5,7,9,11}
+end
+
+-- NEW: Send full chord tones as MIDI (root, 3rd, 5th, 7th)
+local function send_chord_midi(chord_str)
+  if not midi_out then return end
+  -- Parse chord like "Am", "F", "C", etc.
+  -- For now, send root + common intervals as MIDI notes
+  local root_pc = 0  -- would need chord parsing
+  if chord_str:match("^[A-G]") then
+    local note_map = {C=0, D=2, E=4, F=5, G=7, A=9, B=11}
+    root_pc = note_map[chord_str:sub(1,1)] or 0
+  end
+
+  -- Send root, 3rd, 5th, 7th
+  local octave = 4
+  local intervals = {0, 4, 7, 11}  -- major 7th
+  for _, interval in ipairs(intervals) do
+    local note = (octave * 12) + root_pc + interval + state.transpose
+    midi_out:note_on(note, 80)
+  end
+end
 
 -- ============================================================
 --  PRACTICE MODE LOGIC
 -- ============================================================
 
 local practice_clock = nil
+
+-- NEW: Playback mode using clock.sync and BPM
+local function start_playback_mode()
+  state.playback_mode = true
+  state.playback_bpm = SONGS[state.song_idx].bpm
+
+  if state.playback_clock then
+    pcall(function() clock.cancel(state.playback_clock) end)
+  end
+
+  state.playback_clock = clock.run(function()
+    while state.playback_mode do
+      -- Sync to beat and auto-advance sections
+      clock.sync(1)  -- sync to one beat
+
+      -- Advance section after section.bars beats
+      local section = SONGS[state.song_idx].sections[state.section_idx]
+      local bars_to_wait = section and section.bars or 8
+
+      -- After bars complete, move to next section
+      state.loop_bars_counter = state.loop_bars_counter + 1
+      if state.loop_bars_counter >= bars_to_wait then
+        state.loop_bars_counter = 0
+        state.section_idx = state.section_idx + 1
+        if state.section_idx > #SONGS[state.song_idx].sections then
+          state.section_idx = 1  -- loop back
+        end
+      end
+
+      redraw()
+    end
+  end)
+end
+
+local function stop_playback_mode()
+  state.playback_mode = false
+  if state.playback_clock then
+    pcall(function() clock.cancel(state.playback_clock) end)
+    state.playback_clock = nil
+  end
+end
 
 local function start_practice_mode()
   state.practice_mode = true
@@ -263,8 +354,11 @@ end
 -- ============================================================
 
 function init()
+  -- NEW: Initialize MIDI output
+  midi_out = midi.connect(1)
+
   redraw()
-  
+
   -- Screen update loop for beat_phase
   clock.run(function()
     while true do
@@ -281,6 +375,7 @@ function enc(n, d)
     state.section_idx = 1
     state.scroll_offset = 0
     stop_practice_mode()
+    stop_playback_mode()
     state.popup_param = "SONG"
     state.popup_val = state.song_idx
     state.popup_time = 20
@@ -289,6 +384,12 @@ function enc(n, d)
     state.section_idx = util.clamp(state.section_idx + d, 1, #s.sections)
     state.popup_param = "SECTION"
     state.popup_val = state.section_idx
+    state.popup_time = 20
+  elseif n == 3 then
+    -- NEW: E3 controls transpose
+    state.transpose = util.clamp(state.transpose + d, -12, 12)
+    state.popup_param = "TRANSPOSE"
+    state.popup_val = state.transpose
     state.popup_time = 20
   end
   redraw()
@@ -313,10 +414,11 @@ function key(n, z)
         start_practice_mode()
       end
     else
-      -- K2 alone: prev song
+      -- K2 alone: prev song (or toggle playback mode)
       state.song_idx = util.clamp(state.song_idx - 1, 1, #SONGS)
       state.section_idx = 1
       stop_practice_mode()
+      stop_playback_mode()
       state.popup_param = "SONG"
       state.popup_val = state.song_idx
       state.popup_time = 20
@@ -325,16 +427,21 @@ function key(n, z)
   elseif n == 3 and z == 1 then
     local k1_held = (util.time() - k1_pressed_time) > 0.1
     if k1_held then
-      -- K1+K3: toggle section loop
-      state.section_loop_mode = not state.section_loop_mode
-      state.popup_param = "LOOP"
-      state.popup_val = state.section_loop_mode and "ON" or "OFF"
+      -- K1+K3: toggle playback mode (auto sync to BPM)
+      if state.playback_mode then
+        stop_playback_mode()
+      else
+        start_playback_mode()
+      end
+      state.popup_param = "PLAYBACK"
+      state.popup_val = state.playback_mode and "ON" or "OFF"
       state.popup_time = 20
     else
       -- K3 alone: next song
       state.song_idx = util.clamp(state.song_idx + 1, 1, #SONGS)
       state.section_idx = 1
       stop_practice_mode()
+      stop_playback_mode()
       state.popup_param = "SONG"
       state.popup_val = state.song_idx
       state.popup_time = 20
@@ -350,7 +457,7 @@ end
 function redraw()
   screen.clear()
   screen.aa(1)
-  
+
   local s = SONGS[state.song_idx]
   local sec = s.sections[state.section_idx]
 
@@ -377,6 +484,14 @@ function redraw()
   screen.level(beat_flash)
   screen.circle(120, 5, 2)
   screen.fill()
+
+  -- NEW: Show playback mode indicator
+  if state.playback_mode then
+    screen.level(10)
+    screen.font_size(5)
+    screen.move(85, 8)
+    screen.text("AUTO")
+  end
 
   -- ── LIVE ZONE ─────────────────────────────────────────
   -- Track name at level 12 center
@@ -424,6 +539,13 @@ function redraw()
     screen.font_size(5)
     screen.move(0, 62)
     screen.text(string.format("%d -> %d BPM", state.practice_tempo, state.target_tempo))
+  elseif state.playback_mode then
+    -- Playback mode info
+    screen.level(8)
+    screen.font_face(1)
+    screen.font_size(5)
+    screen.move(0, 62)
+    screen.text(string.format("PLAYING: %d BPM + Tr %d", s.bpm, state.transpose))
   else
     -- Context bar at level 6
     screen.level(6)
@@ -431,6 +553,24 @@ function redraw()
     screen.font_size(5)
     screen.move(0, 62)
     screen.text(sec.name.." @ "..s.bpm.." BPM")
+  end
+
+  -- NEW: Scale highlighting - draw 12 chromatic notes
+  if state.section_idx <= #s.sections then
+    local scale = get_scale_from_key(s.key)
+    state.scale_notes = scale
+    screen.level(3)
+    local note_spacing = 128 / 12
+    for i = 0, 11 do
+      local x = i * note_spacing + 2
+      local in_scale = false
+      for _, note_pc in ipairs(scale) do
+        if note_pc == i then in_scale = true; break end
+      end
+      screen.level(in_scale and 10 or 3)
+      screen.circle(x, 50, 1)
+      screen.fill()
+    end
   end
 
   -- Popup system
@@ -459,4 +599,5 @@ end
 function cleanup()
   clock.cancel_all()
   stop_practice_mode()
+  stop_playback_mode()
 end
