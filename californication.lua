@@ -3,6 +3,7 @@
 -- Internal synth with MollyThePoly
 
 engine.name = "MollyThePoly"
+local MollyThePoly = require "molly_the_poly/lib/molly_the_poly_engine"
 
 local midi_out = midi.connect(1)
 
@@ -96,7 +97,7 @@ local state = {
   song_idx = 1,
   section_idx = 1,
   playing_chord = nil,
-  octave = 3,
+  octave = 4,
 }
 
 local function engine_note_on(note, vel)
@@ -237,6 +238,17 @@ function key(n, z)
 end
 
 function init()
+  -- MollyThePoly sound params
+  MollyThePoly.add_params()
+  -- Warm chord preset
+  params:set("osc_wave_shape", 0.3)
+  params:set("lp_filter_cutoff", 2000)
+  params:set("lp_filter_resonance", 0.15)
+  params:set("env_2_attack", 0.01)
+  params:set("env_2_decay", 0.8)
+  params:set("env_2_sustain", 0.6)
+  params:set("env_2_release", 1.0)
+
   params:add_separator("OP-XY")
   params:add_option("opxy_enabled", "OP-XY output", {"off", "on"}, 1)
   params:add_number("opxy_device", "OP-XY MIDI device", 1, 4, 1)
