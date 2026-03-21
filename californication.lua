@@ -242,7 +242,8 @@ function init()
   params:add_number("opxy_device", "OP-XY MIDI device", 1, 4, 1)
   params:add_number("opxy_channel", "OP-XY channel", 1, 8, 1)
   params:set_action("opxy_device", function(v) opxy_out = midi.connect(v) end)
-  
+  opxy_out = midi.connect(params:get("opxy_device"))
+
   redraw()
 end
 
