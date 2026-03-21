@@ -1,10 +1,28 @@
--- californication.lua
+-- californication.lua with OP-XY MIDI support
 -- RHCP Californication album chord and lyric guide for norns
 -- Internal synth with MollyThePoly
 
 engine.name = "MollyThePoly"
 
 local midi_out = midi.connect(1)
+
+-- OP-XY MIDI helpers
+local opxy_out = nil
+local function opxy_note_on(note, vel)
+  if opxy_out and params:get("opxy_enabled") == 2 then
+    opxy_out:note_on(note, vel, params:get("opxy_channel"))
+  end
+end
+local function opxy_note_off(note)
+  if opxy_out and params:get("opxy_enabled") == 2 then
+    opxy_out:note_off(note, 0, params:get("opxy_channel"))
+  end
+end
+local function opxy_cc(cc, val)
+  if opxy_out and params:get("opxy_enabled") == 2 then
+    opxy_out:cc(cc, math.floor(util.clamp(val, 0, 127)), params:get("opxy_channel"))
+  end
+end
 
 local function midi_to_hz(note)
   return 440 * 2^((note - 69) / 12)
@@ -92,11 +110,13 @@ end
 
 local function note_on(note, vel)
   if midi_out then midi_out:note_on(note, vel, 1) end
+  opxy_note_on(note, vel)
   engine_note_on(note, vel)
 end
 
 local function note_off(note)
   if midi_out then midi_out:note_off(note, 0, 1) end
+  opxy_note_off(note)
   engine_note_off(note)
 end
 
@@ -156,6 +176,15 @@ function redraw()
   screen.move(2, 62)
   screen.text("OCT: " .. state.octave)
   
+  -- OP-XY status
+  screen.level(5)
+  screen.move(60, 62)
+  if params:get("opxy_enabled") == 2 then
+    screen.text("OP-XY: CH" .. params:get("opxy_channel"))
+  else
+    screen.text("OP-XY: OFF")
+  end
+  
   screen.update()
 end
 
@@ -208,6 +237,12 @@ function key(n, z)
 end
 
 function init()
+  params:add_separator("OP-XY")
+  params:add_option("opxy_enabled", "OP-XY output", {"off", "on"}, 1)
+  params:add_number("opxy_device", "OP-XY MIDI device", 1, 4, 1)
+  params:add_number("opxy_channel", "OP-XY channel", 1, 8, 1)
+  params:set_action("opxy_device", function(v) opxy_out = midi.connect(v) end)
+  
   redraw()
 end
 
@@ -215,4 +250,7 @@ function cleanup()
   stop_chord()
   engine.noteOffAll()
   if midi_out then midi_out:all_notes_off(1) end
+  if opxy_out and params:get("opxy_enabled") == 2 then
+    opxy_out:all_notes_off(params:get("opxy_channel"))
+  end
 end
