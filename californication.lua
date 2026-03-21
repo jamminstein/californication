@@ -144,48 +144,77 @@ end
 function redraw()
   screen.clear()
   screen.aa(1)
-  
-  -- Header
+
+  local song = SONGS[state.song_idx]
+  local section = song.sections[state.section_idx]
+
+  -- ── Song title bar (top) ──
+  screen.level(3)
+  screen.rect(0, 0, 128, 11)
+  screen.fill()
   screen.level(15)
   screen.font_face(7)
   screen.font_size(8)
-  screen.move(2, 10)
-  screen.text("CALIFORNICATION")
-  
-  -- Song name
-  screen.level(12)
-  screen.font_size(7)
-  screen.move(2, 20)
-  screen.text("SONG " .. state.song_idx .. ": " .. SONGS[state.song_idx].name)
-  
-  -- Section info
-  local song = SONGS[state.song_idx]
-  local section = song.sections[state.section_idx]
-  
-  screen.level(11)
-  screen.font_size(8)
-  screen.move(2, 35)
-  screen.text("CHORD: " .. section.chord)
-  
-  screen.level(8)
-  screen.font_size(7)
-  screen.move(2, 48)
-  screen.text("\"" .. section.lyrics .. "\"")
-  
-  -- Octave indicator
-  screen.level(5)
-  screen.move(2, 62)
-  screen.text("OCT: " .. state.octave)
-  
-  -- OP-XY status
-  screen.level(5)
-  screen.move(60, 62)
-  if params:get("opxy_enabled") == 2 then
-    screen.text("OP-XY: CH" .. params:get("opxy_channel"))
-  else
-    screen.text("OP-XY: OFF")
+  screen.move(2, 8)
+  screen.text(song.name:upper())
+
+  -- Song index dots (top right)
+  for i = 1, #SONGS do
+    screen.level(i == state.song_idx and 15 or 3)
+    screen.circle(100 + (i - 1) * 5, 5, 1)
+    screen.fill()
   end
-  
+
+  -- ── Large chord name, centered ──
+  screen.level(15)
+  screen.font_face(7)
+  screen.font_size(22)
+  screen.move(64, 35)
+  screen.text_center(section.chord)
+
+  -- ── Playing indicator (pulsing dot next to chord if sounding) ──
+  if state.playing_chord then
+    screen.level(12)
+    screen.circle(10, 28, 3)
+    screen.fill()
+  end
+
+  -- ── Section navigation: dots for each section ──
+  local sec_count = #song.sections
+  local sec_w = 80 / sec_count
+  for i = 1, sec_count do
+    local sx = 24 + (i - 1) * sec_w
+    if i == state.section_idx then
+      screen.level(15)
+      screen.rect(sx, 40, sec_w - 2, 3)
+      screen.fill()
+    else
+      screen.level(4)
+      screen.rect(sx, 41, sec_w - 2, 1)
+      screen.fill()
+    end
+  end
+
+  -- ── Lyrics line (below chord) ──
+  screen.level(6)
+  screen.font_face(1)
+  screen.font_size(8)
+  screen.move(64, 52)
+  screen.text_center(section.lyrics)
+
+  -- ── Bottom bar: octave + output ──
+  screen.level(3)
+  screen.font_face(1)
+  screen.font_size(8)
+  screen.move(2, 62)
+  screen.text("oct " .. state.octave)
+
+  if params:get("opxy_enabled") == 2 then
+    screen.level(5)
+    screen.move(126, 62)
+    screen.text_right("XY ch" .. params:get("opxy_channel"))
+  end
+
   screen.update()
 end
 
