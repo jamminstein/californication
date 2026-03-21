@@ -249,8 +249,8 @@ end
 function cleanup()
   stop_chord()
   engine.noteKillAll()
-  if midi_out then midi_out:all_notes_off(1) end
+  if midi_out then midi_out:cc(123, 0, 1) end
   if opxy_out and params:get("opxy_enabled") == 2 then
-    opxy_out:all_notes_off(params:get("opxy_channel"))
+    for ch=1,16 do opxy_out:cc(123, 0, ch) end
   end
 end
