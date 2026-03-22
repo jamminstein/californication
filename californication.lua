@@ -143,7 +143,7 @@ end
 
 function redraw()
   screen.clear()
-  screen.aa(1)
+  screen.aa(0)
 
   local song = SONGS[state.song_idx]
   local section = song.sections[state.section_idx]
@@ -153,7 +153,7 @@ function redraw()
   screen.rect(0, 0, 128, 11)
   screen.fill()
   screen.level(15)
-  screen.font_face(7)
+  screen.font_face(1)
   screen.font_size(8)
   screen.move(2, 8)
   screen.text(song.name:upper())
@@ -167,7 +167,7 @@ function redraw()
 
   -- ── Large chord name, centered ──
   screen.level(15)
-  screen.font_face(7)
+  screen.font_face(1)
   screen.font_size(22)
   screen.move(64, 35)
   screen.text_center(section.chord)
